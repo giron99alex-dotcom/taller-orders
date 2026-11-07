@@ -1,0 +1,17 @@
+node_modules/
+.serverless/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.aws/
+.serverlessrc
+*.pem
+*.key
+*accessKeys*.csv
+credentials*.csv
+.DS_Store
+Thumbs.db

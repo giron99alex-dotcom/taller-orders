@@ -1,0 +1,152 @@
+service: taller-orders
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'develop'}
+  region: us-east-2
+  timeout: 28
+
+  environment:
+    STAGE: ${self:provider.stage}
+    CORS_ORIGINS: ${file(./config/config-${self:provider.stage}.json):CORS_ORIGINS}
+    ORDERS_TABLE:
+      Ref: OrdersTable
+
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: ${self:provider.stage}-MainRestApiId
+    restApiRootResourceId:
+      Fn::ImportValue: ${self:provider.stage}-MainRestApiRootResourceId
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+      Resource:
+        - Fn::GetAtt:
+            - OrdersTable
+            - Arn
+        - Fn::Sub: "${OrdersTable.Arn}/index/*"
+
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:taller-${self:provider.stage}-Products-Get"
+        - Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:taller-${self:provider.stage}-Products-UpdateStock"
+        - Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:taller-${self:provider.stage}-Products-ListBySeller"
+
+custom:
+  cors:
+    origin: ${self:provider.environment.CORS_ORIGINS}
+    headers:
+      - Content-Type
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Date
+      - X-Amz-Security-Token
+    allowCredentials: false
+
+functions:
+  createOrder:
+    handler: src/handlers/createOrder.createOrder
+    name: taller-${self:provider.stage}-Orders-Create
+    events:
+      - http:
+          method: post
+          path: orders/create
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  getOrder:
+    handler: src/handlers/getOrder.getOrder
+    name: taller-${self:provider.stage}-Orders-Get
+    events:
+      - http:
+          method: get
+          path: orders/{id}
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  listOrdersByUserId:
+    handler: src/handlers/listOrdersByUserId.listOrdersByUserId
+    name: taller-${self:provider.stage}-Orders-ListByUser
+    events:
+      - http:
+          method: get
+          path: orders/list/users/{userId}
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  confirmOrder:
+    handler: src/handlers/confirmOrder.confirmOrder
+    name: taller-${self:provider.stage}-Orders-Confirm
+    events:
+      - http:
+          method: post
+          path: orders/{id}/confirm
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+  cancelOrder:
+    handler: src/handlers/cancelOrder.cancelOrder
+    name: taller-${self:provider.stage}-Orders-Cancel
+    events:
+      - http:
+          method: post
+          path: orders/{id}/cancel
+          cors: ${self:custom.cors}
+          authorizer:
+            type: TOKEN
+            authorizerId:
+              Fn::ImportValue: ${self:provider.stage}-MainAuthorizerId
+
+resources:
+  Resources:
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: taller-${self:provider.stage}-orders
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: orderId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: orderId
+            KeyType: HASH
+
+        GlobalSecondaryIndexes:
+          - IndexName: user-orders-index
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
